@@ -239,6 +239,7 @@ svg.ring-svg { transform: rotate(-90deg); }
 .source-tag { font-size: 0.55rem; padding: 2px 6px; border-radius: 4px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
 .source-auto { background: var(--blue-dim); color: var(--blue); }
 .source-manual { background: var(--s3); color: var(--muted2); }
+.source-calendar { background: var(--pink-dim); color: var(--pink); }
 .intensity-dots { display: flex; gap: 3px; }
 .intensity-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--s3); }
 .intensity-dot.filled { background: var(--lime); }
@@ -1331,7 +1332,9 @@ function renderWorkoutRows(tbodyId, workouts) {
     const dots = [1,2,3,4,5].map(i => `<div class="intensity-dot ${i <= (w.intensity||0) ? 'filled' : ''}"></div>`).join('');
     const isPilates = w.focus_area?.toLowerCase().includes('pilates');
     const isPeloton = w.equipment === 'peloton' || w.source?.toLowerCase().includes('peloton');
-    const eqTag = isPilates
+    const eqTag = w.equipment === 'pilates'
+      ? `<span class="eq-tag" style="background:var(--pink-dim);color:var(--pink);border:1px solid rgba(255,79,163,0.3)">🧘 Club Pilates</span>`
+      : isPilates
       ? isPeloton
         ? `<span class="eq-tag eq-peloton">🧘 Peloton Pilates</span>`
         : `<span class="eq-tag eq-gym">🧘 GM Pilates</span>`
@@ -1340,8 +1343,12 @@ function renderWorkoutRows(tbodyId, workouts) {
       : w.equipment === 'walking'
       ? `<span class="eq-tag" style="background:rgba(80,200,120,0.12);color:#50c878;border:1px solid rgba(80,200,120,0.3)">🚶 Walking</span>`
       : `<span class="eq-tag eq-gym">🏋 Gym Monster</span>`;
-    const src = w.source !== 'manual' ? `<span class="source-tag source-auto">${w.source}</span>` : `<span class="source-tag source-manual">manual</span>`;
-    return `<tr>
+    const src = w.source === 'calendar'
+  ? `<span class="source-tag source-calendar">📅 calendar</span>`
+  : w.source !== 'manual'
+  ? `<span class="source-tag source-auto">${w.source}</span>`
+  : `<span class="source-tag source-manual">manual</span>`;
+	  return `<tr>
       <td class="workout-date">${fmtDate(w.logged_at)}</td>
       <td>${eqTag}</td>
       <td class="workout-focus">${w.focus_area || '—'}</td>
@@ -1847,6 +1854,7 @@ function renderPilatesClasses() {
   }).join('');
   // Update the muscle map SVG with any completed classes
   applyPilatesToMuscleMap();
+  injectPilatesIntoWorkoutsTable();
 }
 
 // ─────────────────────────────────────────────────────
@@ -1905,6 +1913,59 @@ function applyPilatesToMuscleMap() {
   }
 }
 
+function injectPilatesIntoWorkoutsTable() {
+  if (!pilatesEvents.length) return;
+  const now = new Date();
+
+  // Only completed, non-waitlisted classes
+  const completed = pilatesEvents.filter(e => {
+    const endTime = e.end || new Date(e.start.getTime() + 3600000);
+    const title = (e.summary || '').toLowerCase();
+    if (title.includes('waitlist') || title.includes('cancelled') || title.includes('pending')) return false;
+    return now >= endTime;
+  });
+
+  if (!completed.length) return;
+
+  // Convert calendar events to workout-shaped objects
+  const calendarWorkouts = completed.map(e => {
+    const endTime = e.end || new Date(e.start.getTime() + 3600000);
+    const durMin = e.end ? Math.round((e.end - e.start) / 60000) : 50;
+    return {
+      logged_at:      endTime.toISOString(),
+      equipment:      'pilates',
+      focus_area:     e.summary || 'Pilates',
+      duration_mins:  durMin,
+      calories:       null,
+      avg_heart_rate: null,
+      intensity:      0,
+      points:         null,
+      source:         'calendar',
+    };
+  });
+
+  // Merge with API workouts, avoiding duplicates by matching date + focus
+  const existingKeys = new Set(
+    (dashData?.recent_workouts || []).map(w =>
+      `${fmtDate(w.logged_at)}|${(w.focus_area||'').toLowerCase()}`
+    )
+  );
+
+  const newWorkouts = calendarWorkouts.filter(w =>
+    !existingKeys.has(`${fmtDate(w.logged_at)}|${(w.focus_area||'').toLowerCase()}`)
+  );
+
+  if (!newWorkouts.length) return;
+
+  // Merge and sort by date descending
+  const merged = [...(dashData?.recent_workouts || []), ...newWorkouts]
+    .sort((a, b) => new Date(b.logged_at) - new Date(a.logged_at));
+
+  allWorkouts = merged;
+  renderWorkoutRows('workouts-tbody', merged);
+  renderWorkoutRows('history-tbody', merged);
+}
+		
 // Re-render status (NOW / Done badges) every 60 seconds
 setInterval(renderPilatesClasses, 60 * 1000);
 // Re-fetch calendar data every 30 minutes
