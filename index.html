@@ -1770,8 +1770,16 @@ function parseICS(raw) {
   const blocks = raw.split('BEGIN:VEVENT');
   for (let i = 1; i < blocks.length; i++) {
     const b  = blocks[i];
-    const get = k => { const m = b.match(new RegExp(k + '(?:;[^:\\r\\n]*)?:([^\\r\\n]+')); return m ? m[1].trim() : ''; };
-    const start = _icsParseDate(b, 'DTSTART');
+    const get = k => {
+      const prefix = k + ':';
+      const lines = b.split(/\r?\n/);
+      for (const line of lines) {
+        if (line.startsWith(prefix)) return line.slice(prefix.length).trim();
+        if (line.match(new RegExp('^' + k + ';'))) return line.replace(/^[^:]+:/, '').trim();
+      }
+      return '';
+    };
+	const start = _icsParseDate(b, 'DTSTART');
     const end   = _icsParseDate(b, 'DTEND');
     const summary = get('SUMMARY');
     if (start && summary) events.push({ summary, start, end, location: get('LOCATION') });
